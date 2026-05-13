@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>on-device chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300&family=IBM+Plex+Sans:wght@300;400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #0c0c0c;
+            --surface: #141414;
+            --surface2: #1c1c1c;
+            --border: #2a2a2a;
+            --border2: #333;
+            --text: #e8e4d9;
+            --muted: #6b6660;
+            --accent: #c8a96e;
+            --accent-dim: #3d3020;
+            --user-bg: #1a1a2e;
+            --user-border: #2d2d50;
+            --ai-bg: #141414;
+            --error: #c06060;
+            --success: #6ca87a;
+            --font-mono: 'IBM Plex Mono', monospace;
+            --font-sans: 'IBM Plex Sans', sans-serif;
+            --radius: 6px;
+            --radius-lg: 10px;
+        }
+
+        html,
+        body {
+            height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font-mono);
+            font-size: 14px;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        /* scanline texture */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(0deg,
+                    transparent,
+                    transparent 2px,
+                    rgba(0, 0, 0, 0.07) 2px,
+                    rgba(0, 0, 0, 0.07) 4px);
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .shell {
+            width: 100%;
+            max-width: 780px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid var(--border);
+            border-right: 1px solid var(--border);
+        }
+
+        /* Header */
+        header {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--surface);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--muted);
+            transition: background 0.3s;
+        }
+
+        .indicator.ready {
+            background: var(--success);
+            box-shadow: 0 0 6px var(--success);
+        }
+
+        .indicator.loading {
+            background: var(--accent);
+            animation: pulse 1s ease-in-out infinite;
+        }
+
+        .indicator.error {
+            background: var(--error);
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.3;
+            }
+        }
+
+        .header-title {
+            font-size: 12px;
+            font-weight: 500;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--text);
+        }
+
+        .header-sub {
+            font-size: 11px;
+            color: var(--muted);
+            letter-spacing: 0.05em;
+        }
+
+        .btn-clear {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--muted);
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 5px 12px;
+            cursor: pointer;
+            letter-spacing: 0.06em;
+            transition: color 0.2s, border-color 0.2s;
+        }
+
+        .btn-clear:hover {
+            color: var(--text);
+            border-color: var(--border2);
+        }
+
+        /* Messages area */
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+            scroll-behavior: smooth;
+        }
+
+        .messages::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .messages::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .messages::-webkit-scrollbar-thumb {
+            background: var(--border2);
+            border-radius: 2px;
+        }
+
+        /* Status banner */
+        .status-banner {
+            margin: 32px 24px 0;
+            padding: 20px 24px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            background: var(--surface);
+        }
+
+        .status-banner.hidden {
+            display: none;
+        }
+
+        .status-banner-title {
+            font-size: 12px;
+            font-weight: 500;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .status-banner-title.ok {
+            color: var(--success);
+        }
+
+        .status-banner-title.warn {
+            color: var(--accent);
+        }
+
+        .status-banner-title.err {
+            color: var(--error);
+        }
+
+        .status-banner p {
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.7;
+        }
+
+        .status-banner a {
+            color: var(--accent);
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+
+        .status-banner code {
+            background: var(--surface2);
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+            color: var(--text);
+        }
+
+        /* Message rows */
+        .msg-row {
+            display: flex;
+            flex-direction: column;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            animation: fadein 0.2s ease-out;
+        }
+
+        @keyframes fadein {
+            from {
+                opacity: 0;
+                transform: translateY(6px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .msg-row.user {
+            background: var(--user-bg);
+            border-left: 2px solid var(--user-border);
+        }
+
+        .msg-row.ai {
+            background: var(--ai-bg);
+            border-left: 2px solid var(--border);
+        }
+
+        .msg-meta {
+            font-size: 10px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .msg-meta .tag {
+            color: var(--accent);
+            font-weight: 500;
+        }
+
+        .msg-content {
+            font-size: 14px;
+            line-height: 1.75;
+            color: var(--text);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .msg-content.streaming::after {
+            content: '▊';
+            display: inline;
+            color: var(--accent);
+            animation: blink 0.8s step-start infinite;
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0;
+            }
+        }
+
+        /* Empty state */
+        .empty-state {
+            padding: 48px 24px;
+            text-align: center;
+            color: var(--muted);
+        }
+
+        .empty-state .big-label {
+            font-size: 32px;
+            font-weight: 300;
+            font-style: italic;
+            color: var(--border2);
+            margin-bottom: 16px;
+            font-family: 'IBM Plex Mono', monospace;
+            letter-spacing: -0.02em;
+        }
+
+        .empty-state p {
+            font-size: 12px;
+            letter-spacing: 0.06em;
+            line-height: 1.9;
+        }
+
+        .prompt-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            margin-top: 24px;
+        }
+
+        .chip {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 6px 14px;
+            color: var(--muted);
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s;
+        }
+
+        .chip:hover {
+            color: var(--text);
+            border-color: var(--accent);
+        }
+
+        /* Input area */
+        .input-area {
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+            padding: 16px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            position: sticky;
+            bottom: 0;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        textarea {
+            flex: 1;
+            font-family: var(--font-mono);
+            font-size: 14px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            padding: 10px 14px;
+            resize: none;
+            outline: none;
+            line-height: 1.6;
+            min-height: 44px;
+            max-height: 180px;
+            transition: border-color 0.15s;
+        }
+
+        textarea::placeholder {
+            color: var(--muted);
+        }
+
+        textarea:focus {
+            border-color: var(--accent);
+        }
+
+        .btn-send {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 500;
+            background: var(--accent-dim);
+            border: 1px solid var(--accent);
+            border-radius: var(--radius);
+            color: var(--accent);
+            padding: 10px 20px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.15s, color 0.15s;
+            height: 44px;
+        }
+
+        .btn-send:hover:not(:disabled) {
+            background: var(--accent);
+            color: var(--bg);
+        }
+
+        .btn-send:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .input-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            color: var(--muted);
+            letter-spacing: 0.04em;
+        }
+
+        /* Session info panel */
+        .session-info {
+            display: none;
+            flex-direction: column;
+            gap: 6px;
+            padding: 10px 0 0;
+            border-top: 1px solid var(--border);
+        }
+
+        .session-info.visible {
+            display: flex;
+        }
+
+        .sinfo-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .sinfo-bar-wrap {
+            flex: 1;
+            min-width: 80px;
+            height: 3px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .sinfo-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            background: var(--accent);
+            transition: width 0.4s, background 0.4s;
+        }
+
+        .sinfo-bar-fill.warn {
+            background: #c8853a;
+        }
+
+        .sinfo-bar-fill.danger {
+            background: var(--error);
+        }
+
+        .sinfo-stats {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .sinfo-stat {
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 0.04em;
+            white-space: nowrap;
+        }
+
+        .sinfo-stat span {
+            color: var(--text);
+        }
+
+        .sinfo-stat.danger span {
+            color: var(--error);
+        }
+
+        .btn-clear.active {
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="shell">
+        <header>
+            <div class="header-left">
+                <div class="indicator" id="indicator"></div>
+                <div>
+                    <div class="header-title">On-Device Chat</div>
+                    <div class="header-sub" id="header-sub">initializing…</div>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button class="btn-clear" id="btn-json">[ json ]</button>
+                <button class="btn-clear" id="btn-clear">[ clear ]</button>
+            </div>
+        </header>
+
+        <div class="messages" id="messages">
+            <div class="status-banner hidden" id="status-banner"></div>
+            <div class="empty-state" id="empty-state">
+                <div class="big-label">_ ask anything</div>
+                <p>running locally · no network · no logs</p>
+                <div class="prompt-chips" id="chips">
+                    <span class="chip" data-prompt="Explain how neural networks learn">how do neural networks
+                        learn?</span>
+                    <span class="chip" data-prompt="Write a short poem about the ocean at night">poem about the ocean at
+                        night</span>
+                    <span class="chip" data-prompt="What are three tips for better sleep?">tips for better sleep</span>
+                    <span class="chip" data-prompt="Summarize the history of the internet in 3 sentences">history of the
+                        internet, brief</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="input-area">
+            <div class="input-row">
+                <textarea id="input" placeholder="type a message… (shift+enter for newline)" rows="1"
+                    disabled></textarea>
+                <button class="btn-send" id="btn-send" disabled>send →</button>
+            </div>
+            <div class="input-footer">
+                <span id="status-text">waiting for model…</span>
+            </div>
+            <div class="session-info" id="session-info">
+                <div class="sinfo-row">
+                    <div class="sinfo-bar-wrap">
+                        <div class="sinfo-bar-fill" id="sinfo-fill" style="width:0%"></div>
+                    </div>
+                </div>
+                <div class="sinfo-stats">
+                    <div class="sinfo-stat" id="si-used">used <span id="si-used-val">—</span></div>
+                    <!-- <div class="sinfo-stat" id="si-left">left <span id="si-left-val">—</span></div> -->
+                    <!-- <div class="sinfo-stat">max <span id="si-max-val">—</span></div>
+                    <div class="sinfo-stat">top-k <span id="si-topk-val">—</span></div>
+                    <div class="sinfo-stat">temp <span id="si-temp-val">—</span></div> -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let session = null;
+        let isStreaming = false;
+        let history = [];
+        let jsonMode = false;
+
+        const $ = id => document.getElementById(id);
+        const indicator = $('indicator');
+        const headerSub = $('header-sub');
+        const messagesEl = $('messages');
+        const statusBanner = $('status-banner');
+        const emptyState = $('empty-state');
+        const inputEl = $('input');
+        const btnSend = $('btn-send');
+        const statusText = $('status-text');
+        const sessionInfo = $('session-info');
+        const sinfoFill = $('sinfo-fill');
+        const siUsed = $('si-used');
+        const siUsedVal = $('si-used-val');
+        const siLeftVal = $('si-left-val');
+        const siMaxVal = $('si-max-val');
+        const siTopkVal = $('si-topk-val');
+        const siTempVal = $('si-temp-val');
+
+        function fmt(n) {
+            if (n == null || n === undefined) return '—';
+            if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+            return String(n);
+        }
+
+        function updateSessionInfo() {
+            if (!session) return;
+
+            // Prefer contextUsage (0.0–1.0) + contextWindow (total tokens).
+            // Fall back to tokensSoFar / maxTokens for older Chrome builds.
+            const usage = session.contextUsage ?? null;
+            const window = session.contextWindow ?? null;
+
+            const pct = session.contextUsage / session.contextWindow
+
+
+
+            sessionInfo.classList.add('visible');
+            sinfoFill.style.width = pct + '%';
+            sinfoFill.className = 'sinfo-bar-fill' +
+                (pct >= 90 ? ' danger' : pct >= 70 ? ' warn' : '');
+
+            siUsedVal.textContent = (pct * 100).toFixed(2) + "%"
+            // siLeftVal.textContent = left !== null ? fmt(left) : '—';
+            // siMaxVal.textContent = fmt(max);
+            // siTopkVal.textContent = session.topK != null ? session.topK : '—';
+            // siTempVal.textContent = session.temperature != null
+            //     ? session.temperature.toFixed(2) : '—';
+
+            siUsed.className = 'sinfo-stat' + (pct >= 90 ? ' danger' : '');
+        }
+
+        function setStatus(state, sub) {
+            indicator.className = 'indicator ' + state;
+            headerSub.textContent = sub;
+        }
+
+        function showBanner(type, titleText, html) {
+            statusBanner.innerHTML = `<div class="status-banner-title ${type}">${titleText}</div><p>${html}</p>`;
+            statusBanner.classList.remove('hidden');
+        }
+
+        function appendMessage(role, text, streaming = false) {
+            emptyState.style.display = 'none';
+            const row = document.createElement('div');
+            row.className = `msg-row ${role}`;
+            const tag = role === 'user' ? 'you' : 'model';
+            const ts = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+            row.innerHTML = `
+    <div class="msg-meta"><span class="tag">${tag}</span> · ${ts}</div>
+    <div class="msg-content${streaming ? ' streaming' : ''}" id="msg-${Date.now()}">${escapeHtml(text)}</div>
+  `;
+            messagesEl.appendChild(row);
+            row.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            return row.querySelector('.msg-content');
+        }
+
+        function escapeHtml(s) {
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        async function init() {
+            setStatus('loading', 'checking availability…');
+
+            if (typeof LanguageModel === 'undefined') {
+                setStatus('error', 'not available');
+                showBanner('err', '✗ LanguageModel not found', `
+      This page requires Chrome's built-in AI (Prompt API).<br><br>
+      <strong>To enable it:</strong><br>
+      1. Open <code>chrome://flags</code><br>
+      2. Enable <code>#prompt-api-for-gemini-nano</code><br>
+      3. Enable <code>#optimization-guide-on-device-model</code><br>
+      4. Relaunch Chrome and wait for the model to download.<br><br>
+      Requires <a href="https://www.google.com/chrome/" target="_blank">Chrome 138+</a> on desktop.
+    `);
+                statusText.textContent = 'LanguageModel unavailable';
+                return;
+            }
+
+            let availability;
+            try {
+                availability = await LanguageModel.availability();
+            } catch (e) {
+                setStatus('error', 'availability check failed');
+                showBanner('err', '✗ error', `Could not check model availability: ${e.message}`);
+                statusText.textContent = 'error';
+                return;
+            }
+
+            if (availability === 'unavailable') {
+                setStatus('error', 'model unavailable');
+                showBanner('err', '✗ model not available', `
+      The on-device model is not available on this device.<br>
+      Your device may not meet the hardware requirements.<br><br>
+      Check <code>chrome://components</code> and look for <em>Optimization Guide On Device Model</em>.
+    `);
+                statusText.textContent = 'model unavailable';
+                return;
+            }
+
+            if (availability === 'downloadable') {
+                setStatus('loading', 'model not yet downloaded');
+                showBanner('warn', '⟳ model needs download', `
+      The on-device model hasn't been downloaded yet.<br>
+      Creating a session will trigger the download — this may take a few minutes on first run.
+    `);
+            }
+
+            if (availability === 'downloading') {
+                setStatus('loading', 'model downloading…');
+                showBanner('warn', '⟳ downloading model', `
+      The on-device model is currently downloading. Please wait and reload this page once complete.<br><br>
+      Check progress at <code>chrome://components</code>.
+    `);
+                statusText.textContent = 'model downloading…';
+                return;
+            }
+
+            setStatus('loading', 'creating session…');
+            statusText.textContent = 'loading model…';
+
+            try {
+                session = await LanguageModel.create({
+                    systemPrompt: 'You are a helpful, concise assistant. Respond clearly and directly. Keep answers focused and avoid unnecessary filler phrases.',
+                    expectedInputLanguages: ['en'],
+                    expectedOutputLanguages: ['en']
+                });
+                console.log('[session props]', {
+                    tokensSoFar: session.tokensSoFar,
+                    maxTokens: session.maxTokens,
+                    tokensLeft: session.tokensLeft,
+                    contextUsage: session.contextUsage,
+                    topK: session.topK,
+                    temperature: session.temperature,
+                    allKeys: Object.keys(session)
+                });
+            } catch (e) {
+                setStatus('error', 'session failed');
+                showBanner('err', '✗ session error', `Failed to create model session: ${e.message}`);
+                statusText.textContent = 'session error';
+                return;
+            }
+
+            setStatus('ready', 'gemini nano · on-device');
+            statusText.textContent = 'ready · on-device · private';
+            inputEl.disabled = false;
+            btnSend.disabled = false;
+            inputEl.focus();
+
+            updateSessionInfo();
+        }
+
+        async function sendMessage(text) {
+            if (isStreaming || !text.trim() || !session) return;
+            isStreaming = true;
+            btnSend.disabled = true;
+            inputEl.disabled = true;
+            btnSend.textContent = '…';
+
+            appendMessage('user', text);
+            const aiEl = appendMessage('ai', '', !jsonMode);
+            aiEl.textContent = '';
+
+            setStatus('loading', 'generating…');
+            statusText.textContent = 'generating…';
+
+            try {
+                if (jsonMode) {
+                    const jsonPrompt = 'Respond only with valid JSON (no markdown fences, no prose, no explanation). ' + text;
+                    const raw = await session.prompt(jsonPrompt, {
+                        expectedInputLanguages: ['en'],
+                        expectedOutputLanguages: ['en']
+                    });
+                    const cleaned = raw
+                        .replaceAll("```json\n", "")
+                        .replaceAll("\n```", "")
+                        .replaceAll("```json", "")
+                        .replaceAll("```", "")
+                        .trim();
+                    try {
+                        const parsed = JSON.parse(cleaned);
+                        aiEl.textContent = JSON.stringify(parsed, null, 2);
+                    } catch (_) {
+                        aiEl.textContent = cleaned + '\n\n[invalid json — raw output above]';
+                        aiEl.style.color = 'var(--error)';
+                    }
+                } else {
+                    const stream = session.promptStreaming(text, {
+                        expectedInputLanguages: ['en'],
+                        expectedOutputLanguages: ['en']
+                    });
+                    for await (const chunk of stream) {
+                        aiEl.textContent += chunk;
+                        aiEl.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                    }
+                    aiEl.classList.remove('streaming');
+                }
+            } catch (e) {
+                aiEl.classList.remove('streaming');
+                aiEl.textContent = '[error: ' + e.message + ']';
+                aiEl.style.color = 'var(--error)';
+            }
+
+            updateSessionInfo();
+            setStatus('ready', 'gemini nano · on-device');
+            statusText.textContent = 'ready · on-device · private';
+            isStreaming = false;
+            btnSend.disabled = false;
+            inputEl.disabled = false;
+            btnSend.textContent = 'send →';
+            inputEl.focus();
+        }
+
+        inputEl.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const val = inputEl.value.trim();
+                if (val) {
+                    inputEl.value = '';
+                    autoResize();
+                    sendMessage(val);
+                }
+            }
+        });
+
+        btnSend.addEventListener('click', () => {
+            const val = inputEl.value.trim();
+            if (val) {
+                inputEl.value = '';
+                autoResize();
+                sendMessage(val);
+            }
+        });
+
+        function autoResize() {
+            inputEl.style.height = 'auto';
+            inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px';
+        }
+        inputEl.addEventListener('input', autoResize);
+
+        $('btn-json').addEventListener('click', () => {
+            jsonMode = !jsonMode;
+            $('btn-json').classList.toggle('active', jsonMode);
+            $('btn-json').textContent = jsonMode ? '[ json ✓ ]' : '[ json ]';
+            statusText.textContent = jsonMode
+                ? 'json mode on · replies parsed as JSON'
+                : 'ready · on-device · private';
+        });
+
+        $('btn-clear').addEventListener('click', async () => {
+            const rows = messagesEl.querySelectorAll('.msg-row');
+            rows.forEach(r => r.remove());
+            statusBanner.classList.add('hidden');
+            emptyState.style.display = '';
+            if (session) {
+                try {
+                    session.destroy();
+                    session = await LanguageModel.create({
+                        systemPrompt: 'You are a helpful, concise assistant. Respond clearly and directly. Keep answers focused and avoid unnecessary filler phrases.',
+                        expectedInputLanguages: ['en'],
+                        expectedOutputLanguages: ['en']
+                    });
+                    updateSessionInfo();
+                } catch (e) { }
+            }
+        });
+
+        document.querySelectorAll('.chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                if (inputEl.disabled) return;
+                const prompt = chip.dataset.prompt;
+                inputEl.value = prompt;
+                autoResize();
+                inputEl.focus();
+            });
+        });
+
+        init();
+    </script>
+</body>
+</html>
